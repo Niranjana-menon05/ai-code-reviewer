@@ -2,7 +2,7 @@
 
 An automated hybrid code review platform combining deterministic static analyzers with Groq-powered LLM reasoning.
 
-> **Live Demo:** [link]  
+> **Live Demo:** https://ai-code-reviewer-lhm4anyq8hvf2cg4rzwsqs.streamlit.app/
 > **Screenshot:** [add after deploying]
 
 ---
