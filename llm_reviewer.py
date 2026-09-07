@@ -90,7 +90,13 @@ def _build_prompt(code: str, static_issues: List[Dict[str, Any]]) -> str:
    - Missing edge case handling (e.g. empty inputs, None values, division by zero)
    - Dangerous assumptions or unhandled exceptions
    - You may only mention a static analysis issue if you are confirming and expanding upon why it is especially severe or hazardous in this specific context.
-3. Respond ONLY with a valid JSON object. Do not include markdown code fences (```json), conversational pleasantries, or prose outside the JSON object.
+3. CATEGORY RULES:
+   - "security": Use ONLY for actual vulnerabilities (e.g. hardcoded secrets, injection risks, unsafe deserialization, path traversal, insecure cryptography). Do NOT use "security" for general robustness, missing validation, or error-handling issues.
+   - "bug": Use for logic errors, calculation flaws, incorrect control flow, unhandled exceptions, missing input validation, or general robustness/reliability issues.
+   - "style": Code style, readability, PEP8, naming conventions, or documentation.
+   - "performance": Inefficient algorithms, redundant calculations, memory leaks, or unoptimized data structures.
+   - "design": Architectural flaws, tight coupling, violations of SOLID principles, or poor separation of concerns.
+4. Respond ONLY with a valid JSON object. Do not include markdown code fences (```json), conversational pleasantries, or prose outside the JSON object.
 
 ### Required JSON Schema:
 {{

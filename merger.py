@@ -38,8 +38,8 @@ def _highest_severity(sev1: str, sev2: str) -> str:
     return sev1 if r1 <= r2 else sev2
 
 
-def _derive_static_suggestion(msg: str) -> Optional[str]:
-    """Derive an actionable suggestion for common static analysis messages."""
+def _derive_static_suggestion(msg: str, category: str = "style") -> str:
+    """Derive an actionable suggestion for common static analysis messages or provide a generic fallback."""
     msg_lower = msg.lower()
     if "unused import" in msg_lower or "imported but unused" in msg_lower:
         return "Remove the unused import to keep the module namespace clean."
@@ -53,7 +53,7 @@ def _derive_static_suggestion(msg: str) -> Optional[str]:
         return "Add a descriptive docstring explaining purpose, parameters, and return types."
     if "blank lines" in msg_lower:
         return "Follow PEP8 spacing: separate top-level functions with two blank lines."
-    return None
+    return f"Review this {category} issue and address it per the linter's guidance."
 
 
 def _extract_tokens(text: str) -> Set[str]:
@@ -76,8 +76,8 @@ def _are_same_underlying_problem(issue_a: Dict[str, Any], issue_b: Dict[str, Any
     line_a = issue_a.get("line_number")
     line_b = issue_b.get("line_number")
     
-    # Must be on the exact same line
-    if line_a is None or line_b is None or line_a != line_b:
+    # Must be on the exact same numeric line
+    if line_a is None or line_b is None or line_a == "General" or line_b == "General" or line_a != line_b:
         return False
 
     tokens_a = _extract_tokens(issue_a.get("message", ""))
@@ -105,10 +105,13 @@ def _normalize_static_issue(item: Dict[str, Any]) -> Dict[str, Any]:
     # Map static tools: bandit -> security, pylint/flake8 -> style
     category = "security" if tool == "bandit" else "style"
     severity = _normalize_severity(item.get("severity", "low"))
-    suggestion = _derive_static_suggestion(raw_msg)
+    suggestion = _derive_static_suggestion(raw_msg, category)
+    line = item.get("line_number")
+    line_number = line if (line is not None and line != "General") else "General"
 
     return {
-        "line_number": item.get("line_number"),
+        "line_number": line_number,
+        "display_line": f"Line {line_number}" if isinstance(line_number, int) else "General",
         "severity": severity,
         "category": category,
         "source": "static",
@@ -129,17 +132,23 @@ def _normalize_llm_issue(item: Dict[str, Any]) -> Dict[str, Any]:
     line = item.get("line_number")
     if line is not None:
         try:
-            line = int(line)
+            line_no = int(line)
         except (ValueError, TypeError):
-            line = None
+            line_no = "General"
+    else:
+        line_no = "General"
+
+    raw_sugg = str(item.get("suggestion", "")).strip() if item.get("suggestion") else ""
+    suggestion = raw_sugg or f"Review this {category} issue and address it per best practices."
 
     return {
-        "line_number": line,
+        "line_number": line_no,
+        "display_line": f"Line {line_no}" if isinstance(line_no, int) else "General",
         "severity": severity,
         "category": category,
         "source": "llm",
         "message": str(item.get("message", "")).strip(),
-        "suggestion": str(item.get("suggestion", "")).strip() or None,
+        "suggestion": suggestion,
     }
 
 
@@ -182,22 +191,26 @@ def merge_reviews(static_results: Dict[str, Any], llm_results: Dict[str, Any]) -
 
         if matching_static_tools:
             tools_str = ", ".join(sorted(set(matching_static_tools)))
+            sugg = llm_issue.get("suggestion") or f"Review this {llm_issue['category']} issue and address it per best practices."
             merged_issues.append({
                 "line_number": llm_issue["line_number"],
+                "display_line": llm_issue.get("display_line") or (f"Line {llm_issue['line_number']}" if isinstance(llm_issue['line_number'], int) else "General"),
                 "severity": highest_sev,
                 "category": llm_issue["category"],
                 "source": "both",
                 "message": f"{llm_issue['message']} (Confirmed by static analysis: {tools_str})",
-                "suggestion": llm_issue["suggestion"],
+                "suggestion": sugg,
             })
         else:
+            sugg = llm_issue.get("suggestion") or f"Review this {llm_issue['category']} issue and address it per best practices."
             merged_issues.append({
                 "line_number": llm_issue["line_number"],
+                "display_line": llm_issue.get("display_line") or (f"Line {llm_issue['line_number']}" if isinstance(llm_issue['line_number'], int) else "General"),
                 "severity": llm_issue["severity"],
                 "category": llm_issue["category"],
                 "source": "llm",
                 "message": llm_issue["message"],
-                "suggestion": llm_issue["suggestion"],
+                "suggestion": sugg,
             })
 
     # Step 2: Consolidate remaining static issues (merging multi-tool static duplicates on same line)
@@ -223,6 +236,7 @@ def merge_reviews(static_results: Dict[str, Any], llm_results: Dict[str, Any]) -
         if not found_static_dup:
             clean_item = {
                 "line_number": static_issue["line_number"],
+                "display_line": static_issue["display_line"],
                 "severity": static_issue["severity"],
                 "category": static_issue["category"],
                 "source": "static",
@@ -241,8 +255,8 @@ def merge_reviews(static_results: Dict[str, Any], llm_results: Dict[str, Any]) -
     def _sort_key(issue: Dict[str, Any]) -> tuple:
         sev_rank = SEVERITY_ORDER.get(issue.get("severity", "low"), 2)
         line = issue.get("line_number")
-        # Numbered lines appear in order, general/None lines appear at the end
-        line_rank = (0, line) if line is not None else (1, 0)
+        # Numbered lines appear in order, 'General' or non-int lines appear at the end
+        line_rank = (0, line) if isinstance(line, int) else (1, 0)
         return (sev_rank, line_rank)
 
     merged_issues.sort(key=_sort_key)
@@ -303,7 +317,7 @@ def authenticate_and_calculate(user_role, values):
     print("-" * 70)
 
     for idx, issue in enumerate(final_report["issues"], 1):
-        line_str = f"Line {issue['line_number']:2d}" if issue["line_number"] is not None else "General"
+        line_str = f"Line {issue['line_number']:2d}" if isinstance(issue["line_number"], int) else "General"
         source_tag = f"[{issue['source'].upper()}]"
         sev_tag = f"[{issue['severity'].upper():6s}]"
         cat_tag = f"[{issue['category'].upper():11s}]"
